@@ -55,6 +55,22 @@ class PlayerStore(private val prefs: SharedPreferences) {
     var reviveUsedForLevel by mutableIntStateOf(prefs.getInt("reviveLevel", 0))
         private set
 
+    // ---- профиль («Мое») ------------------------------------------------
+
+    /** Ник игрока: при первом запуске генерируется «player<число>» и сохраняется. */
+    var nickname by mutableStateOf(prefs.getString("nickname", "").orEmpty())
+        private set
+
+    /** Индекс выбранного аватара в списке AVATARS (по умолчанию — заяц). */
+    var avatar by mutableIntStateOf(prefs.getInt("avatar", 1))
+        private set
+
+    /** Лучшая серия побед подряд (сбрасывается при проигрыше). */
+    var maxWinStreak by mutableIntStateOf(prefs.getInt("maxWinStreak", 0))
+        private set
+
+    private var winStreak by mutableIntStateOf(prefs.getInt("winStreak", 0))
+
     // настройки
     private val vibrationState = mutableStateOf(prefs.getBoolean("vibration", true))
     var vibration: Boolean
@@ -72,6 +88,26 @@ class PlayerStore(private val prefs: SharedPreferences) {
         set(v) { musicState.value = v; editor.putBoolean("music", v).apply() }
 
     private val editor get() = prefs.edit()
+
+    init {
+        if (nickname.isEmpty()) {
+            nickname = "player" + (1_000_000_000L + (Math.abs(System.nanoTime()) % 9_000_000_000L))
+            editor.putString("nickname", nickname).apply()
+        }
+    }
+
+    fun rename(value: String) {
+        val v = value.trim().take(24)
+        if (v.isNotEmpty()) {
+            nickname = v
+            editor.putString("nickname", v).apply()
+        }
+    }
+
+    fun chooseAvatar(index: Int) {
+        avatar = index
+        editor.putInt("avatar", index).apply()
+    }
 
     // ---- монеты ---------------------------------------------------------
 
@@ -117,6 +153,11 @@ class PlayerStore(private val prefs: SharedPreferences) {
     }
 
     fun spendLife(): Boolean {
+        // проигрыш обнуляет серию побед (даже если жизней уже не было)
+        if (winStreak != 0) {
+            winStreak = 0
+            editor.putInt("winStreak", 0).apply()
+        }
         if (lives <= 0) return false
         lives--
         if (nextLifeAt == 0L) nextLifeAt = System.currentTimeMillis() + Economy.LIFE_REGEN_MS
@@ -139,6 +180,9 @@ class PlayerStore(private val prefs: SharedPreferences) {
             bestLevel = level + 1
             editor.putInt("bestLevel", bestLevel).apply()
         }
+        winStreak++
+        if (winStreak > maxWinStreak) maxWinStreak = winStreak
+        editor.putInt("winStreak", winStreak).putInt("maxWinStreak", maxWinStreak).apply()
         addCoins(Economy.WIN_COINS)
         addPiggy(Economy.PIGGY_PER_LEVEL)
     }

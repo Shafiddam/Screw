@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import com.fidapp.screw.game.Board
+import com.fidapp.screw.game.GameEngine
 import com.fidapp.screw.game.Piece
 import com.fidapp.screw.game.Screw
 import com.fidapp.screw.game.bounds
@@ -140,6 +141,11 @@ private fun Piece.screwsOf(all: List<Screw>) = all.filter { it.pieceId == id }
 private fun Offset.scale(f: Float) = Offset(x * f, y * f)
 
 private fun DrawScope.drawPiece(piece: Piece, scale: Float, dx: Float, dy: Float, alpha: Float) {
+    // серая «заблокированная» деталь = стекло: полупрозрачная пластина с бликом;
+    // она РЕАЛЬНО перекрывает винты под собой, снимается только бонусом «Плавить»
+    val glass = piece.locked
+    val base = if (glass) Color(0xFFAFC3D6) else Color(android.graphics.Color.parseColor(piece.colorHex))
+    val fillAlpha = if (glass) 0.62f else 1f
     val path = Path()
     when (piece.kind) {
         "rect" -> {
@@ -149,7 +155,7 @@ private fun DrawScope.drawPiece(piece: Piece, scale: Float, dx: Float, dy: Float
             val bottom = top + piece.h * scale
             val r = (piece.corners.coerceAtMost(minOf(piece.w, piece.h) / 2f)) * scale
             drawRoundRect(
-                color = Color(android.graphics.Color.parseColor(piece.colorHex)).copy(alpha = alpha),
+                color = base.copy(alpha = fillAlpha * alpha),
                 topLeft = Offset(left, top),
                 size = androidx.compose.ui.geometry.Size(right - left, bottom - top),
                 cornerRadius = CornerRadius(r, r),
@@ -162,6 +168,7 @@ private fun DrawScope.drawPiece(piece: Piece, scale: Float, dx: Float, dy: Float
                 cornerRadius = CornerRadius(r, r),
                 style = Stroke(width = 10f * scale),
             )
+            if (glass) drawGlassShine(left + r, top + r, right - r, bottom - r, scale, alpha)
         }
         else -> {
             piece.points.forEachIndexed { i, (px, py) ->
@@ -170,9 +177,24 @@ private fun DrawScope.drawPiece(piece: Piece, scale: Float, dx: Float, dy: Float
                 if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
             }
             path.close()
-            drawPath(path, Color(android.graphics.Color.parseColor(piece.colorHex)).copy(alpha = alpha))
+            drawPath(path, base.copy(alpha = fillAlpha * alpha))
             drawPath(path, Color.White.copy(alpha = alpha), style = Stroke(width = 12f * scale))
+            if (glass) {
+                val b = piece.bounds()
+                drawGlassShine(dx + b[0] * scale, dy + b[1] * scale, dx + b[2] * scale, dy + b[3] * scale, scale, alpha)
+            }
         }
+    }
+}
+
+/** Диагональные блики поверх «стекла», чтобы пластина читалась как стеклянная. */
+private fun DrawScope.drawGlassShine(l: Float, t: Float, rr: Float, b: Float, scale: Float, alpha: Float) {
+    val w = (rr - l).coerceAtLeast(1f)
+    val h = (b - t).coerceAtLeast(1f)
+    val stripe = Color.White.copy(alpha = 0.30f * alpha)
+    val sw = 8f * scale
+    listOf(0.30f, 0.52f).forEach { f ->
+        drawLine(stripe, Offset(l + w * f, t), Offset(l + w * f - h * 0.35f, b), sw)
     }
 }
 
@@ -245,19 +267,23 @@ fun ToolboxWidget(
             size = androidx.compose.ui.geometry.Size(size.width - 2 * m, size.height - bodyTop - m * 0.7f - m * 0.5f),
             cornerRadius = CornerRadius(m * 0.9f, m * 0.9f),
         )
-        // гнёзда
+        // гнёзда: пустые — серые углубления, заполненные — шляпки винтов;
+        // размер шляпок подобран так, чтобы винт был ОТЧЁТЛИВО виден в ящике
         val n = capacity.coerceAtLeast(1)
-        val innerLeft = m * 2f
-        val innerW = size.width - 4 * m
+        val innerLeft = m * 1.6f
+        val innerW = size.width - 3.2f * m
         val gap = innerW / n
-        val r = (gap * 0.36f).coerceAtMost((size.height - bodyTop) * 0.28f)
-        val cy = bodyTop + (size.height - bodyTop) * 0.45f
+        val r = (gap * 0.42f).coerceAtMost((size.height - bodyTop) * 0.3f)
+        val cy = bodyTop + (size.height - bodyTop) * 0.5f
         for (k in 0 until n) {
             val cx = innerLeft + gap * (k + 0.5f)
             if (k < filled) {
+                // лунка под винтом, чтобы шляпка читалась как вложенный в ящик
+                drawCircle(Color(0xFF8E97A6).copy(alpha = 0.35f), r * 1.12f, Offset(cx, cy))
                 drawScrewAt(Offset(cx, cy), c, r)
             } else {
                 drawCircle(Color(0xFFB9BFC9), r, Offset(cx, cy))
+                drawCircle(Color(0xFFEDEFF3), r * 0.72f, Offset(cx, cy))
             }
         }
     }
@@ -279,6 +305,21 @@ fun HoldRow(slots: List<Color?>, modifier: Modifier = Modifier) {
             if (color != null) drawScrewAt(Offset(cx, cy), color, r * 0.78f)
         }
     }
+}
+
+/**
+ * Экранный центр гнезда ящика-заказа — тот же расчёт, что рисует
+ * [ToolboxWidget], чтобы летящий винт приземлялся ровно в своё гнездо.
+ */
+fun toolboxSocketCenter(cell: Rect, socket: Int, capacity: Int = GameEngine.BOX_CAPACITY): Offset {
+    val bodyTop = cell.height * 0.16f
+    val m = cell.width * 0.1f
+    val n = capacity.coerceAtLeast(1)
+    val gap = (cell.width - 3.2f * m) / n
+    val k = socket.coerceIn(0, n - 1)
+    val cx = m * 1.6f + gap * (k + 0.5f)
+    val cy = bodyTop + (cell.height - bodyTop) * 0.5f
+    return Offset(cell.left + cx, cell.top + cy)
 }
 
 @Suppress("unused")

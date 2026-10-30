@@ -6,10 +6,11 @@ package com.fidapp.screw.game
  *     доступный — не перекрыт даже ЧАСТИЧНО ни одной живой деталью выше слоем;
  *     чтобы добраться до нижних фигур, сначала выкручивают винты верхних;
  *  2. вверху открыто ACTIVE_BOX_SLOTS (2) ящика, каждый ровно под ОДИН цвет,
- *     ёмкость ящика = числу шурупов этого цвета на уровне (но не больше 3);
- *  3. ящик наполнился — он уходит, из очереди приезжает следующий и ВСТАЁТ НА
- *     ЕГО МЕСТО; шурупы нужного цвета АВТОМАТИЧЕСКИ перелетают в новый ящик
- *     со склада;
+ *     в каждом всегда 3 гнезда — прилетевший винт остаётся в гнезде;
+ *  3. ящик наполнился (3 шт.) — он уходит, из очереди приезжает следующий
+ *     (цвета следующего заказа) и ВСТАЁТ НА ЕГО МЕСТО; если винтов такого
+ *     цвета на доске больше нет, ящик уезжает недолитым; шурупы нужного
+ *     цвета АВТОМАТИЧЕСКИ перелетают в новый ящик со склада;
  *  4. нет открытого ящика цвета — шуруп кладётся на СКЛАД (кружки под ящиками,
  *     level.holdSlots штук); склад забит и ни один доступный винт не подходит
  *     к ящикам — поражение;
@@ -33,16 +34,21 @@ class GameEngine(val level: Level) {
 
         /** Плиток «Открыть ящик» на уровень. */
         const val CLOSED_TILES = 2
+
+        /** Маркер хода «сплавить стекло» в истории greedySolve. */
+        private const val MELT = "MELT"
     }
 
     class PieceState(val piece: Piece) {
         var removed: Boolean = false
     }
 
-    /** Ящик-заказ: один цвет, своя ёмкость. */
-    class Box(val color: ScrewColor, val capacity: Int) {
+    /** Ящик-заказ: один цвет, всегда 3 гнезда. */
+    class Box(val color: ScrewColor, val capacity: Int = BOX_CAPACITY) {
         var count: Int = 0
         val full: Boolean get() = count >= capacity
+        /** Ящик наполнился (или цвет кончился) — ещё виден, но уедет на settle(). */
+        var leaving: Boolean = false
     }
 
     /** Куда улетел шуруп. */
@@ -99,17 +105,22 @@ class GameEngine(val level: Level) {
     /**
      * Доступен ли шуруп: его деталь жива и ни одна деталь выше слоем
      * не перекрывает шляпку хотя бы частично (проба по центру и 4 точкам
-     * на радиусе — иначе винт «задет» краем верхней фигуры).
+     * на радиусе — иначе винт «задет» краем верхней фигуры). Блокируют
+     * ВСЕ живые детали, включая серые «стёкла» (locked): сквозь стекло
+     * выкручивать нельзя — его убирают только бонусом «Плавить».
      */
     fun isScrewAccessible(screw: Screw): Boolean {
         if (isCollected(screw.id)) return false
         val owner = pieceOf(screw)
         if (owner.locked || !isLive(owner)) return false
         return level.pieces.none { upper ->
-            upper.id != owner.id && !upper.locked && isLive(upper) &&
+            upper.id != owner.id && isLive(upper) &&
                 upper.layer > owner.layer && coversScrew(upper, screw)
         }
     }
+
+    /** Есть ли живая серая деталь-«стекло» (её можно сплавить бонусом и открыть ход). */
+    fun hasLiveLocked(): Boolean = level.pieces.any { it.locked && isLive(it) }
 
     private fun coversScrew(piece: Piece, screw: Screw): Boolean {
         val r = SCREW_HEAD_R * 0.55f
@@ -133,10 +144,7 @@ class GameEngine(val level: Level) {
 
     fun tapScrew(screwId: Int): List<Event> {
         val screw = screws.firstOrNull { it.id == screwId } ?: return listOf(Event.Rejected)
-        if (!isScrewAccessible(screw)) {
-            evaluateEnd()
-            return listOf(Event.Rejected)
-        }
+        if (!isScrewAccessible(screw)) return listOf(Event.Rejected)
         val events = mutableListOf<Event>()
         val boxIndex = boxFor(screw.color)
         if (boxIndex != null) {
@@ -144,17 +152,14 @@ class GameEngine(val level: Level) {
             box.count++
             collectedScrews += screw.id
             events += Event.ScrewCollected(screw, Destination.BoxSlot(boxIndex))
-            if (box.full) {
-                activeBoxes.removeAt(boxIndex)
-                // новый ящик встаёт на освободившееся место
-                events += arriveNextBox(boxIndex)
-            }
+            // полный ящик НЕ убираем сразу: он стоит с 3 винтами, пока UI
+            // не вызовет settle() (когда винт прилетит)
+            if (box.full) box.leaving = true
         } else if (hold.size < holdCapacity) {
             collectedScrews += screw.id
             hold += screw
             events += Event.ScrewCollected(screw, Destination.HoldSlot(hold.size - 1))
         } else {
-            evaluateEnd()
             return listOf(Event.Rejected)
         }
         val owner = pieceOf(screw)
@@ -162,7 +167,8 @@ class GameEngine(val level: Level) {
             pieceStates[owner.id].removed = true
             events += Event.PieceFell(owner)
         }
-        events += evaluateEnd()
+        // победу/поражение НЕ оцениваем: полная коробка ещё «стоит» и не
+        // пустела; evaluateEnd вызывает settle() — уже на устойчивом состоянии
         return events
     }
 
@@ -173,7 +179,31 @@ class GameEngine(val level: Level) {
     fun openBoxTile(): List<Event> {
         if (!canOpenBox()) return listOf(Event.Rejected)
         closedTiles--
-        return arriveNextBox() + evaluateEnd()
+        return arriveNextBox() + settle()
+    }
+
+    /** Сколько незакрытых винтов этого цвета ещё на доске. */
+    private fun remainingOf(color: ScrewColor): Int =
+        screws.count { it.color == color && !isCollected(it.id) }
+
+    /**
+     * Уезжают ящики, которые наполнились или которым цвет уже кончился на
+     * доске (иначе они никогда не заполнятся). На место уехавшего встаёт
+     * следующий ящик очереди; цепочка повторяется, пока что-то уезжает.
+     * UI вызывает её, когда летящий винт приземлился — так игрок успевает
+     * увидеть полный ящик с 3 винтами до его замены. Здесь же определяется
+     * итог уровня (победа/поражение) — по уже устойчивому состоянию.
+     */
+    fun settle(): List<Event> {
+        val events = mutableListOf<Event>()
+        while (true) {
+            val idx = activeBoxes.indexOfFirst { it.leaving || it.full || remainingOf(it.color) == 0 }
+            if (idx < 0) break
+            activeBoxes.removeAt(idx)
+            events += arriveNextBox(idx)
+        }
+        events += evaluateEnd()
+        return events
     }
 
     /** Приезд ящика из очереди (в слот [atIndex] или в конец) + автоперелёт винтов со склада. */
@@ -194,8 +224,9 @@ class GameEngine(val level: Level) {
             }
         }
         if (box.full) {
-            activeBoxes.removeAt(slot)
-            events += arriveNextBox(slot)
+            // приехавший ящик мог сразу наполниться со склада — помечаем,
+            // за его уход и замена следом отвечает settle()
+            box.leaving = true
         }
         return events
     }
@@ -245,8 +276,11 @@ class GameEngine(val level: Level) {
                 finished = Event.Win
                 listOf(Event.Win)
             }
-            // поражение: шурупы ещё на доске, но ни один ход легален
+            // поражение: шурупы ещё на доске, легальных ходов нет, и СПЛАВИТЬ
+            // нечего (есть живое стекло — игрок может открыть ход бонусом, это
+            // ещё не конец)
             screws.any { !isCollected(it.id) } &&
+                !hasLiveLocked() &&
                 accessibleScrews().none { canTap(it) } -> {
                 finished = Event.Lose
                 listOf(Event.Lose)
@@ -260,12 +294,18 @@ class GameEngine(val level: Level) {
      * На каждом шаге выбирает ход по симуляции на клоне движка (просмотр на 1 ход):
      * сначала ходы, ведущие к победе, затем — сколько винтов собрано,
      * прогресс открытых ящиков и количество доступных винтов после хода.
+     * Если легальных ходов нет, но на доске живое стекло — решатель плавит
+     * его (считается, что игрок докупит бонус «Плавить»). Шаг = tapScrew + settle.
      */
     fun greedySolve(maxSteps: Int = 4000): Boolean {
-        val history = mutableListOf<Int>()
-        fun replay(moves: List<Int>): GameEngine {
+        val history = mutableListOf<Any>()
+        fun replay(moves: List<Any>): GameEngine {
             val clone = GameEngine(level)
-            moves.forEach { clone.tapScrew(it) }
+            moves.forEach { move ->
+                if (move == MELT) clone.melt() else {
+                    clone.tapScrew(move as Int); clone.settle()
+                }
+            }
             return clone
         }
         fun score(e: GameEngine): Int = when (e.finished) {
@@ -279,29 +319,35 @@ class GameEngine(val level: Level) {
         while (steps++ < maxSteps) {
             if (finished != null) break
             val candidates = accessibleScrews().filter { canTap(it) }
-            if (candidates.isEmpty()) break
+            if (candidates.isEmpty()) {
+                // уперлись в стекло? пробуем расплавить один (без него — тупик)
+                if (hasLiveLocked()) {
+                    history += MELT
+                    melt()
+                } else {
+                    break
+                }
+                continue
+            }
             val best = candidates
                 .map { it.id to replay(history + it.id) }
                 .maxByOrNull { (_, sim) -> score(sim) }
                 ?.first ?: break
             history += best
             tapScrew(best)
+            settle()
         }
         return finished == Event.Win
     }
 
     /**
-     * Очередь ящиков: каждый цвет делится на ящики ёмкостью <= 3
-     * (7 зелёных -> 3+2+2), порядок детерминирован номером уровня,
-     * первые два — разных цветов, чтобы на старте было два разных заказа.
+     * Очередь ящиков: на каждый цвет — ceil(кол-во/3) ящиков по 3 гнезда;
+     * порядок детерминирован номером уровня, первые два — разных цветов.
      */
     private fun buildBoxQueue(level: Level): List<Box> {
         val counts = level.screws.groupingBy { it.color }.eachCount()
         val boxes = counts.flatMap { (color, total) ->
-            val parts = (total + BOX_CAPACITY - 1) / BOX_CAPACITY
-            val base = total / parts
-            val bigger = total % parts
-            List(parts) { i -> Box(color, base + if (i < bigger) 1 else 0) }
+            List((total + BOX_CAPACITY - 1) / BOX_CAPACITY) { Box(color) }
         }
         if (boxes.size < 2) return boxes
         val random = Random(20261029L + level.number * 104729L)

@@ -69,6 +69,17 @@ private val dict: Map<String, Pair<String, String>> = mapOf(
     "exit_q" to ("Вы хотите выйти из игры?" to "Do you want to exit the game?"),
     "yes" to ("Да" to "Yes"),
     "no" to ("Нет" to "No"),
+    "my" to ("Мое" to "Mine"),
+    "avatars" to ("Аватары" to "Avatars"),
+    "statistics" to ("Статистика" to "Statistics"),
+    "level_word" to ("Уровень" to "Level"),
+    "streak_wins" to ("Макс. серия побед" to "Best win streak"),
+    "first_try" to ("С первой попытки" to "First-try wins"),
+    "login_streak" to ("Макс. серия входов" to "Best login streak"),
+    "race_champ" to ("Чемпион гонки" to "Race champion"),
+    "league_champ" to ("Чемпион лиги" to "League champion"),
+    "daily_win" to ("Ежедневный вызов победы" to "Daily challenge wins"),
+    "unlocks_at" to ("Откроется на %d-м уровне" to "Unlocks at level %d"),
 )
 
 val LocalPlayerStore = compositionLocalOf<PlayerStore?> { null }

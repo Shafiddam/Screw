@@ -44,11 +44,11 @@ import androidx.compose.ui.window.Dialog
 import com.fidapp.screw.game.Board
 import com.fidapp.screw.game.Economy
 import com.fidapp.screw.game.GameEngine
+import com.fidapp.screw.game.ScrewColor
 import com.fidapp.screw.game.Levels
 import com.fidapp.screw.game.PowerUp
 import com.fidapp.screw.game.PlayerStore
 import com.fidapp.screw.game.Screw
-import com.fidapp.screw.game.ScrewColor
 import kotlinx.coroutines.delay
 import kotlin.math.min
 import kotlin.math.sin
@@ -82,10 +82,47 @@ fun GameScreen(
     var bonus by remember { mutableStateOf<PowerUp?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
 
+    // Снимок лотка в наблюдаемом Compose-состоянии: ряд ящиков/склада читает
+    // эти значения, а не поля движка напрямую — так перерисовка ряда гарантирована
+    // после каждого изменения (engine — обычный класс, Compose его изменения не отслеживает).
+    var trayBoxes by remember { mutableStateOf<List<Pair<ScrewColor, Int>>>(emptyList()) }
+    var trayHold by remember { mutableStateOf<List<ScrewColor?>>(emptyList()) }
+    var trayTiles by remember { mutableStateOf(0) }
+
     // строки вычисляем здесь (@Composable), чтобы использовать внутри не-composable колбэков
     val notEnough = L("not_enough")
     val adStub = L("ad_stub")
     val noBoxes = L("box_none")
+
+    /** Обработка событий движка: упавшие детали, победа, поражение (с учётом
+     *  того, что итог приходит из settle(), когда винт уже прилетел). */
+    fun consume(events: List<GameEngine.Event>) {
+        events.forEach { e ->
+            when (e) {
+                is GameEngine.Event.PieceFell -> falling.add(FallingPiece(e.piece, 0f))
+                is GameEngine.Event.Win -> {
+                    feedback.success(player.sound)
+                    player.onLevelWon(levelNumber)
+                    showWin = true
+                }
+                is GameEngine.Event.Lose -> {
+                    feedback.fail(player.sound)
+                    player.spendLife()
+                    if (player.canRevive(levelNumber)) showRevive = true else showLose = true
+                }
+                else -> {}
+            }
+        }
+    }
+
+    /** Обновить снимок лотка из движка (после любой мутации движка). */
+    fun refreshTray() {
+        trayBoxes = engine.activeBoxes.map { it.color to it.count }
+        trayTiles = engine.closedTiles
+        trayHold = (0 until engine.holdCapacity).map { i -> engine.hold.getOrNull(i)?.color }
+    }
+
+    LaunchedEffect(levelNumber) { refreshTray() }
 
     // тикер анимаций: полёт шурупов + падение деталей
     LaunchedEffect(flying.size, falling.size) {
@@ -97,7 +134,15 @@ fun GameScreen(
             frameTime = now
             val p = ((now - start) / dur.toFloat()).coerceIn(0f, 1f)
             for (i in flying.indices) flying[i] = flying[i].copy(progress = p)
-            if (p >= 1f) flying.clear()
+            if (p >= 1f && flying.isNotEmpty()) {
+                flying.clear()
+                // винт прилетел: теперь полный ящик уезжает, а на его место
+                // встаёт следующий — игрок видит и полные 3 гнезда, и замену;
+                // итог уровня (Win/Lose) тоже приходит из settle()
+                consume(engine.settle())
+                tick++
+                refreshTray()
+            }
             for (i in falling.indices) {
                 falling[i] = falling[i].let { it.copy(progress = (it.progress + 0.04f).coerceAtMost(1f)) }
             }
@@ -114,9 +159,10 @@ fun GameScreen(
         return Offset(ox + screw.x * s, oy + screw.y * s)
     }
 
-    fun boxToScreen(index: Int): Offset {
-        boxCells.getOrNull(index)?.takeIf { it != Rect.Zero }?.let {
-            return Offset(it.center.x, it.center.y)
+    fun boxToScreen(index: Int, socket: Int? = null): Offset {
+        boxCells.getOrNull(index)?.takeIf { it != Rect.Zero }?.let { cell ->
+            // если указано гнездо — летим ровно в него, иначе в центр ящика
+            return if (socket != null) toolboxSocketCenter(cell, socket) else Offset(cell.center.x, cell.center.y)
         }
         // запасной расчёт: ячейки ряда делят ящики И плитки «Открыть ящик»
         val n = (engine.activeBoxes.size + engine.closedTiles).coerceAtLeast(1)
@@ -142,30 +188,20 @@ fun GameScreen(
         val collected = events.filterIsInstance<GameEngine.Event.ScrewCollected>().firstOrNull()
         if (collected != null) {
             val to = when (val d = collected.destination) {
-                is GameEngine.Destination.BoxSlot -> boxToScreen(d.index)
+                // винт летит в конкретное гнездо своего ящика (последнее занятое)
+                is GameEngine.Destination.BoxSlot -> {
+                    val filled = engine.activeBoxes.getOrNull(d.index)?.count ?: 0
+                    boxToScreen(d.index, (filled - 1).coerceAtLeast(0))
+                }
                 is GameEngine.Destination.HoldSlot -> holdToScreen(d.index)
             }
             flying.add(FlyingScrew(screwId, screw.color.hex, boardToScreen(screw), to, 0f))
         }
         tick++
+        refreshTray()
         feedback.tap(player.sound)
         if (player.vibration) feedback.vibrate(true, 18)
-        events.forEach { e ->
-            when (e) {
-                is GameEngine.Event.PieceFell -> falling.add(FallingPiece(e.piece, 0f))
-                is GameEngine.Event.Win -> {
-                    feedback.success(player.sound)
-                    player.onLevelWon(levelNumber)
-                    showWin = true
-                }
-                is GameEngine.Event.Lose -> {
-                    feedback.fail(player.sound)
-                    player.spendLife()
-                    if (player.canRevive(levelNumber)) showRevive = true else showLose = true
-                }
-                else -> {}
-            }
-        }
+        consume(events)
     }
 
     fun applyBonus(type: PowerUp, free: Boolean) {
@@ -192,6 +228,7 @@ fun GameScreen(
             }
         }
         tick++
+        refreshTray()
         feedback.coin(player.sound)
         bonus = null
     }
@@ -240,7 +277,7 @@ fun GameScreen(
 
             // лоток: ящики-заказы + плитки «Открыть ящик», ниже — склад-кружки
             TrayRow(
-                engine, tick,
+                trayBoxes, trayTiles, trayHold,
                 onBoxRowPlaced = { boxRowBounds = it },
                 onBoxPlaced = { i, r ->
                     while (boxCells.size <= i) boxCells.add(Rect.Zero)
@@ -360,19 +397,16 @@ fun GameScreen(
 
 @Composable
 private fun TrayRow(
-    engine: GameEngine,
-    tick: Int,
+    boxes: List<Pair<ScrewColor, Int>>,
+    tiles: Int,
+    holdColors: List<ScrewColor?>,
     onBoxRowPlaced: (Rect) -> Unit,
     onBoxPlaced: (Int, Rect) -> Unit,
     onHoldRowPlaced: (Rect) -> Unit,
     onOpenTile: () -> Unit,
 ) {
-    // сам факт изменения tick в параметре гарантирует перерисовку ряда после каждого тапа
-    val boxes = engine.activeBoxes.map { it.color to it.count }
-    val tiles = engine.closedTiles
-    val holdCells = engine.holdCapacity
-    val holdColors: List<Color?> = (0 until holdCells).map { i ->
-        engine.hold.getOrNull(i)?.color?.hex?.let { Color(android.graphics.Color.parseColor(it)) }
+    val holdRender: List<Color?> = holdColors.map { sc ->
+        sc?.hex?.let { Color(android.graphics.Color.parseColor(it)) }
     }
     Column(
         Modifier
@@ -420,7 +454,7 @@ private fun TrayRow(
         }
         Spacer(Modifier.height(6.dp))
         HoldRow(
-            holdColors,
+            holdRender,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(44.dp)

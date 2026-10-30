@@ -47,6 +47,8 @@ fun MapScreen(
     var showLives by remember { mutableStateOf(false) }
     var showPiggy by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showMy by remember { mutableStateOf(false) }
+    var showAvatars by remember { mutableStateOf(false) }
 
     val endLevel = player.bestLevel + 4
     val startLevel = (player.bestLevel - 4).coerceAtLeast(1)
@@ -69,9 +71,8 @@ fun MapScreen(
                     Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFF3D6DA)),
-                    contentAlignment = Alignment.Center,
-                ) { Text("🐰", fontSize = 24.sp) }
+                        .clickable { showMy = true },
+                ) { AvatarBox(player.avatar, 44.dp) }
                 Spacer(Modifier.width(8.dp))
                 StatPill(player.coins, { CoinIcon(Modifier.size(34.dp)) }, onPlus = { showLives = false }, showBadge = true, modifier = Modifier.width(110.dp))
                 Spacer(Modifier.width(8.dp))
@@ -159,6 +160,8 @@ fun MapScreen(
     if (showLives) LivesDialog(player) { showLives = false }
     if (showPiggy) PiggyDialog(player) { showPiggy = false }
     if (showSettings) SettingsDialog(player) { showSettings = false }
+    if (showMy) MyDialog(player, onOpenAvatars = { showAvatars = true }) { showMy = false }
+    if (showAvatars) AvatarDialog(player) { showAvatars = false }
 }
 
 @Composable
