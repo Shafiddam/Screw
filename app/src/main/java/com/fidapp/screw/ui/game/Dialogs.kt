@@ -50,30 +50,8 @@ fun SettingsDialog(player: PlayerStore, onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose) {
         GameDialog(L("settings"), onClose) {
             SettingsBody(player)
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallBlueButton(L("support"), Modifier.weight(1f))
-                SmallBlueButton(L("restore"), Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                SmallBlueButton(L("promo"), Modifier.weight(1f))
-                SmallBlueButton(L("link"), Modifier.weight(1f))
-            }
         }
     }
-}
-
-@Composable
-private fun SmallBlueButton(text: String, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .height(44.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Palette.panelBlueDark)
-            .clickable { },
-        contentAlignment = Alignment.Center,
-    ) { Text(text, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
 }
 
 /** Окно покупки бонуса: цена в монетах или «Бес» (заглушка rewarded). */

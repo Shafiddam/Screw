@@ -239,7 +239,8 @@ fun SwitchRow(icon: @Composable () -> Unit, label: String, checked: Boolean, onC
             onCheckedChange = onChange,
             colors = SwitchDefaults.colors(
                 checkedTrackColor = Palette.green,
-                uncheckedTrackColor = Color(0xFFCBD2DA),
+                // выключенный — не серый, а светло-зелёный
+                uncheckedTrackColor = Color(0xFFC9E8C9),
             ),
         )
     }

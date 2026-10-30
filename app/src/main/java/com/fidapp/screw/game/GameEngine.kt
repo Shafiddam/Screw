@@ -7,8 +7,9 @@ package com.fidapp.screw.game
  *     чтобы добраться до нижних фигур, сначала выкручивают винты верхних;
  *  2. вверху открыто ACTIVE_BOX_SLOTS (2) ящика, каждый ровно под ОДИН цвет,
  *     ёмкость ящика = числу шурупов этого цвета на уровне (но не больше 3);
- *  3. ящик наполнился — он уходит, из очереди приезжает следующий ящик;
- *     шурупы нужного цвета АВТОМАТИЧЕСКИ перелетают в новый ящик из склада;
+ *  3. ящик наполнился — он уходит, из очереди приезжает следующий и ВСТАЁТ НА
+ *     ЕГО МЕСТО; шурупы нужного цвета АВТОМАТИЧЕСКИ перелетают в новый ящик
+ *     со склада;
  *  4. нет открытого ящика цвета — шуруп кладётся на СКЛАД (кружки под ящиками,
  *     level.holdSlots штук); склад забит и ни один доступный винт не подходит
  *     к ящикам — поражение;
@@ -145,7 +146,8 @@ class GameEngine(val level: Level) {
             events += Event.ScrewCollected(screw, Destination.BoxSlot(boxIndex))
             if (box.full) {
                 activeBoxes.removeAt(boxIndex)
-                events += arriveNextBox()
+                // новый ящик встаёт на освободившееся место
+                events += arriveNextBox(boxIndex)
             }
         } else if (hold.size < holdCapacity) {
             collectedScrews += screw.id
@@ -174,10 +176,11 @@ class GameEngine(val level: Level) {
         return arriveNextBox() + evaluateEnd()
     }
 
-    /** Приезд ящика из очереди + автоперелёт подходящих винтов со склада. */
-    private fun arriveNextBox(): List<Event> {
+    /** Приезд ящика из очереди (в слот [atIndex] или в конец) + автоперелёт винтов со склада. */
+    private fun arriveNextBox(atIndex: Int? = null): List<Event> {
         val box = nextQueuedBox() ?: return emptyList()
-        activeBoxes += box
+        val slot = (atIndex ?: activeBoxes.size).coerceIn(0, activeBoxes.size)
+        activeBoxes.add(slot, box)
         val events = mutableListOf<Event>(Event.BoxArrived(box))
         // склад «разгружается», если приехал ящик его цвета
         var changed = true
@@ -185,15 +188,14 @@ class GameEngine(val level: Level) {
             changed = false
             val waiting = hold.indexOfFirst { it.color == box.color }
             if (waiting >= 0) {
-                events += Event.ScrewCollected(hold.removeAt(waiting), Destination.BoxSlot(activeBoxes.lastIndex))
+                events += Event.ScrewCollected(hold.removeAt(waiting), Destination.BoxSlot(slot))
                 box.count++
                 changed = true
             }
         }
         if (box.full) {
-            val idx = activeBoxes.indexOf(box)
-            if (idx >= 0) activeBoxes.removeAt(idx)
-            events += arriveNextBox()
+            activeBoxes.removeAt(slot)
+            events += arriveNextBox(slot)
         }
         return events
     }

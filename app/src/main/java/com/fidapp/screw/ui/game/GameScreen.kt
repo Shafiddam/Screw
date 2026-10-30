@@ -71,6 +71,9 @@ fun GameScreen(
     var boardBounds by remember { mutableStateOf(Rect.Zero) }
     var boxRowBounds by remember { mutableStateOf(Rect.Zero) }
     var holdRowBounds by remember { mutableStateOf(Rect.Zero) }
+    // точные прямоугольники каждого ящика (в ряде есть и плитки «Открыть ящик»,
+    // делить ширину ряда на число ящиков — смещало цель полёта вправо)
+    val boxCells = remember { mutableStateListOf<Rect>() }
 
     var showPause by remember { mutableStateOf(false) }
     var showWin by remember { mutableStateOf(false) }
@@ -112,7 +115,11 @@ fun GameScreen(
     }
 
     fun boxToScreen(index: Int): Offset {
-        val n = engine.activeBoxes.size.coerceAtLeast(1)
+        boxCells.getOrNull(index)?.takeIf { it != Rect.Zero }?.let {
+            return Offset(it.center.x, it.center.y)
+        }
+        // запасной расчёт: ячейки ряда делят ящики И плитки «Открыть ящик»
+        val n = (engine.activeBoxes.size + engine.closedTiles).coerceAtLeast(1)
         val cell = boxRowBounds.width / n
         val i = index.coerceIn(0, n - 1)
         return Offset(boxRowBounds.left + cell * (i + 0.5f), boxRowBounds.center.y)
@@ -235,6 +242,10 @@ fun GameScreen(
             TrayRow(
                 engine, tick,
                 onBoxRowPlaced = { boxRowBounds = it },
+                onBoxPlaced = { i, r ->
+                    while (boxCells.size <= i) boxCells.add(Rect.Zero)
+                    boxCells[i] = r
+                },
                 onHoldRowPlaced = { holdRowBounds = it },
                 onOpenTile = { bonus = PowerUp.BOX },
             )
@@ -352,6 +363,7 @@ private fun TrayRow(
     engine: GameEngine,
     tick: Int,
     onBoxRowPlaced: (Rect) -> Unit,
+    onBoxPlaced: (Int, Rect) -> Unit,
     onHoldRowPlaced: (Rect) -> Unit,
     onOpenTile: () -> Unit,
 ) {
@@ -375,14 +387,15 @@ private fun TrayRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            boxes.forEach { (color, count) ->
+            boxes.forEachIndexed { index, (color, count) ->
                 ToolboxWidget(
                     color = color,
                     filled = count,
                     capacity = maxOf(count, GameEngine.BOX_CAPACITY),
                     modifier = Modifier
                         .weight(1f)
-                        .fillMaxHeight(),
+                        .fillMaxHeight()
+                        .onGloballyPositioned { onBoxPlaced(index, it.boundsInRoot()) },
                 )
             }
             repeat(tiles) {
