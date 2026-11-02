@@ -33,18 +33,28 @@ android {
     }
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG нужен рекламным модулям (режим отладки VK Ads SDK)
+        buildConfig = true
     }
 }
 
 dependencies {
+    // VK Ads (myTarget) — баннер 320x50, rewarded, interstitial.
+    // Репозиторий mavenCentral() уже подключён в settings.gradle.kts
+    implementation("com.my.target:mytarget-sdk:5.52.5")
+    // Напоминания «поиграй сегодня» — локальный ежедневный WorkManager-джоб
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
+    implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

@@ -9,15 +9,21 @@ import androidx.compose.runtime.setValue
 
 /**
  * Экономика и прогресс игрока. Единый источник правды для UI (Compose State),
- * поверх [SharedPreferences]. Никаких покупок и рекламы — цены и «Бес» работают
- * как заглушки: списывают виртуальные монеты / сразу выдают бонус.
+ * поверх [SharedPreferences]. Реклама — реальная VK Ads (см. `ads/Ads.kt`);
+ * покупок нет — цены в монетах и «Бесплатно» (rewarded-видео) работают в демо-режиме IAP.
  */
 object Economy {
     const val MAX_LIVES = 5
-    const val LIFE_REGEN_MS = 30 * 60 * 1000L          // 1 жизнь каждые 30 минут
+    const val LIFE_REGEN_MS = 5 * 60 * 1000L           // 1 жизнь каждые 5 минут
     const val WIN_COINS = 15                            // монет за победу (как на скрине «Победа»)
     const val PIGGY_PER_LEVEL = 200                     // свинка-копилка: +200 за уровень
     const val PIGGY_GOAL = 1600
+
+    const val FREE_COINS = 10                           // бесплатные монеты по кнопке «+»
+    const val FREE_COINS_COOLDOWN_MS = 12 * 60 * 60 * 1000L  // раз в 12 часов
+
+    const val SHOP_COINS = 10                           // «получить 10» в магазине
+    const val SHOP_COINS_COOLDOWN_MS = 6 * 60 * 60 * 1000L   // раз в 6 часов
 
     // цены бонусов в монетах (повторяем скриншоты)
     const val PRICE_DRILL = 120
@@ -26,6 +32,14 @@ object Economy {
     const val PRICE_BOX = 300
     const val PRICE_REVIVE = 300
     const val PRICE_LIVES_2 = 300
+
+    /** Цена бонуса в монетах — один источник для магазина, игры и диалогов. */
+    fun priceOf(type: PowerUp): Int = when (type) {
+        PowerUp.DRILL -> PRICE_DRILL
+        PowerUp.MELT -> PRICE_MELT
+        PowerUp.SEAL -> PRICE_SEAL
+        PowerUp.BOX -> PRICE_BOX
+    }
 }
 
 /** Бонусы, покупаемые за монеты или «бесплатно» (заглушка под rewarded-видео). */
@@ -55,9 +69,36 @@ class PlayerStore(private val prefs: SharedPreferences) {
     var reviveUsedForLevel by mutableIntStateOf(prefs.getInt("reviveLevel", 0))
         private set
 
+    /** Количество побед всего (для трофеев). */
+    var totalWins by mutableIntStateOf(prefs.getInt("wins", 0))
+        private set
+
+    // ---- инвентарь бонусов (куплены в магазине, применяются в игре бесплатно) --
+
+    private val bonusCounts = PowerUp.values().associateWith {
+        mutableIntStateOf(prefs.getInt("bonus_${it.ordinal}", 0))
+    }
+
+    fun bonusCount(type: PowerUp): Int = bonusCounts.getValue(type).intValue
+
+    fun addBonus(type: PowerUp, n: Int = 1) {
+        val s = bonusCounts.getValue(type)
+        s.intValue += n
+        editor.putInt("bonus_${type.ordinal}", s.intValue).apply()
+    }
+
+    /** Списать 1 бонус из инвентаря; false — если пуст. */
+    fun spendBonus(type: PowerUp): Boolean {
+        val s = bonusCounts.getValue(type)
+        if (s.intValue <= 0) return false
+        s.intValue--
+        editor.putInt("bonus_${type.ordinal}", s.intValue).apply()
+        return true
+    }
+
     // ---- профиль («Мое») ------------------------------------------------
 
-    /** Ник игрока: при первом запуске генерируется «player<число>» и сохраняется. */
+    /** Ник игрока: по умолчанию «Игрок», можно переименовать в «Мое». */
     var nickname by mutableStateOf(prefs.getString("nickname", "").orEmpty())
         private set
 
@@ -87,13 +128,69 @@ class PlayerStore(private val prefs: SharedPreferences) {
         get() = musicState.value
         set(v) { musicState.value = v; editor.putBoolean("music", v).apply() }
 
+    /** Локальные ежедневные напоминания «поиграй сегодня» (WorkManager). */
+    private val remindersState = mutableStateOf(prefs.getBoolean("reminders", false))
+    var reminders: Boolean
+        get() = remindersState.value
+        set(v) { remindersState.value = v; editor.putBoolean("reminders", v).apply() }
+
+    /** Метка календарного дня, в который хоть раз открывали уровень — для напоминаний. */
+    fun markPlayedToday() {
+        editor.putString("lastPlayedDay", dayKey()).apply()
+    }
+
+    fun playedToday(): Boolean = prefs.getString("lastPlayedDay", "") == dayKey()
+
+    private fun dayKey(): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+    /** Когда в последний раз брали бесплатные монеты (epoch ms); 0 — ещё не брали. */
+    var lastFreeCoinAt by mutableLongStateOf(prefs.getLong("lastFreeCoinAt", 0L))
+        private set
+
     private val editor get() = prefs.edit()
 
     init {
         if (nickname.isEmpty()) {
-            nickname = "player" + (1_000_000_000L + (Math.abs(System.nanoTime()) % 9_000_000_000L))
+            nickname = "Игрок"
             editor.putString("nickname", nickname).apply()
         }
+    }
+
+    /** Бесплатные +10 монеты доступны раз в 12 часов. */
+    fun freeCoinsReady(now: Long = System.currentTimeMillis()): Boolean =
+        now - lastFreeCoinAt >= Economy.FREE_COINS_COOLDOWN_MS
+
+    /** До окончания недоступности бесплатных монет (ms); 0 — уже можно брать. */
+    fun freeCoinsWaitMs(now: Long = System.currentTimeMillis()): Long =
+        (lastFreeCoinAt + Economy.FREE_COINS_COOLDOWN_MS - now).coerceAtLeast(0L)
+
+    fun claimFreeCoins(now: Long = System.currentTimeMillis()): Boolean {
+        if (!freeCoinsReady(now)) return false
+        lastFreeCoinAt = now
+        editor.putLong("lastFreeCoinAt", now).apply()
+        addCoins(Economy.FREE_COINS)
+        return true
+    }
+
+    /** Когда в последний раз получали +10 монет в магазине (epoch ms); 0 — ещё не брали. */
+    var lastShopCoinAt by mutableLongStateOf(prefs.getLong("lastShopCoinAt", 0L))
+        private set
+
+    /** Бесплатные +10 монет в магазине — раз в 6 часов. */
+    fun shopCoinsReady(now: Long = System.currentTimeMillis()): Boolean =
+        now - lastShopCoinAt >= Economy.SHOP_COINS_COOLDOWN_MS
+
+    /** До следующего +10 в магазине (ms); 0 — уже можно брать. */
+    fun shopCoinsWaitMs(now: Long = System.currentTimeMillis()): Long =
+        (lastShopCoinAt + Economy.SHOP_COINS_COOLDOWN_MS - now).coerceAtLeast(0L)
+
+    fun claimShopCoins(now: Long = System.currentTimeMillis()): Boolean {
+        if (!shopCoinsReady(now)) return false
+        lastShopCoinAt = now
+        editor.putLong("lastShopCoinAt", now).apply()
+        addCoins(Economy.SHOP_COINS)
+        return true
     }
 
     fun rename(value: String) {
@@ -180,9 +277,10 @@ class PlayerStore(private val prefs: SharedPreferences) {
             bestLevel = level + 1
             editor.putInt("bestLevel", bestLevel).apply()
         }
+        totalWins++
         winStreak++
         if (winStreak > maxWinStreak) maxWinStreak = winStreak
-        editor.putInt("winStreak", winStreak).putInt("maxWinStreak", maxWinStreak).apply()
+        editor.putInt("winStreak", winStreak).putInt("maxWinStreak", maxWinStreak).putInt("wins", totalWins).apply()
         addCoins(Economy.WIN_COINS)
         addPiggy(Economy.PIGGY_PER_LEVEL)
     }

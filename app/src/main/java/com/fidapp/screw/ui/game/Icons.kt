@@ -1,43 +1,98 @@
 package com.fidapp.screw.ui.game
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import com.fidapp.screw.R
 
 /**
  * Векторные иконки, нарисованные на Canvas в мультяшном стиле скриншотов.
- * Никаких внешних PNG — всё кодом, APK лёгкий, стиль единый.
+ * Иконки бонусов (сверло/плашка/молоток/ящик) — реальные картинки пользователя
+ * из `res/drawable-nodpi` (белый фон, как «стикер» на плашке).
  */
 
+/** Картинка-иконка бонуса поверх плашки: белый фон скруглён — выглядит стикером. */
+@Composable
+private fun BonusPicture(res: Int, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Image(
+        painter = painterResource(res),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Золотая монета — картинка пользователя `coin2_1024.jpg` (белый фон). Обрезается
+ * СТРОГО по кругу: `clip(CircleShape)` + зум 1.12. Раньше стоял зум 1.10 и ободок
+ * `border` шёл по краю КОНТЕЙНЕРА — из-за этого рамка-круг была крупнее самой
+ * монеты (на фото она занимает ~94% кадра) и игроку казалось, что монета «не
+ * внутри круга, смещена влево-вниз». Теперь ободок уменьшен на 6% и сходится с
+ * реальным краем монеты, а зум 1.12 срезает белую кромку с запасом.
+ * Тонкий тёмно-золотой ободок отделяет монету от белых карточек.
+ *
+ * Фото монеты тёмное (средняя яркость ~130/255): в размере 20–24 dp (цены бонусов)
+ * оно читалось как тёмно-коричневое пятно, поэтому к картинке применён ColorFilter —
+ * та же матрица, что проверена в `tools/coin_preview.ps1`: +18 % насыщенности и
+ * лёгкий подъём яркости. На крупных размерах фильтр почти незаметен.
+ */
 @Composable
 fun CoinIcon(modifier: Modifier = Modifier, size: Dp = Dp.Unspecified) {
-    Canvas(modifier = modifier.then(if (size == Dp.Unspecified) Modifier else Modifier.size(size))) {
-        val c = Offset(center.x, center.y)
-        val r = this.size.minDimension / 2f
-        drawCircle(Color(0xFFC98600), r * 0.98f, c)
-        drawCircle(
-            Brush.verticalGradient(listOf(Color(0xFFFFE08A), Color(0xFFF6B500))),
-            r * 0.82f, c,
+    Box(
+        modifier = modifier.then(if (size == Dp.Unspecified) Modifier else Modifier.size(size)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painterResource(R.drawable.coin2_1024),
+            contentDescription = null,
+            colorFilter = COIN_FILTER,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(CircleShape)
+                .graphicsLayer { scaleX = 1.12f; scaleY = 1.12f },
         )
-        drawCircle(Color(0xFFE39400), r * 0.55f, c, style = Stroke(width = r * 0.12f))
-        // «плюс» как на монете из скриншотов
-        val w = r * 0.16f
-        val arm = r * 0.34f
-        drawRoundRect(Color(0xFFE39400), Offset(c.x - w / 2, c.y - arm), Size(w, arm * 2), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2))
-        drawRoundRect(Color(0xFFE39400), Offset(c.x - arm, c.y - w / 2), Size(arm * 2, w), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2))
+        // ободок по краю самой монеты, а не контейнера: Box урезан на 6%
+        Box(Modifier.padding(3.dp).fillMaxSize().border(1.dp, Color(0x80C98600), CircleShape))
     }
 }
+
+/** Матрица «подсветки» монеты: насыщенность +18 %, яркость +13 %/10 %/3 % по каналам. */
+private val COIN_FILTER = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            1.18f, -0.06f, -0.06f, 0f, 34f,
+            -0.06f, 1.18f, -0.06f, 0f, 26f,
+            -0.06f, -0.06f, 1.18f, 0f, 8f,
+            0f, 0f, 0f, 1f, 0f,
+        )
+    )
+)
 
 @Composable
 fun HeartIcon(modifier: Modifier = Modifier, color: Color = Palette.heart) {
@@ -61,106 +116,55 @@ private fun DrawScope.drawHeart(color: Color) {
 
 @Composable
 fun DrillIcon(modifier: Modifier = Modifier) {
-    // TODO(art): заменить на Image(painterResource(R.drawable.ic_drill)),
-    //  когда картинки бонусов лягут в res/drawable — все вызовы идут через эту функцию
-    Canvas(modifier = modifier) {
-        val w = size.width; val h = size.height
-        // корпус
-        drawRoundRect(
-            Color(0xFF4FC3F7), Offset(w * 0.42f, h * 0.28f), Size(w * 0.42f, h * 0.34f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.08f),
-        )
-        // рукоятка
-        drawRoundRect(
-            Color(0xFF0288D1), Offset(w * 0.5f, h * 0.55f), Size(w * 0.2f, h * 0.32f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f),
-        )
-        // сверло
-        val bit = Path().apply {
-            moveTo(w * 0.42f, h * 0.38f)
-            lineTo(w * 0.1f, h * 0.48f)
-            lineTo(w * 0.42f, h * 0.56f)
-            close()
-        }
-        drawPath(bit, Color(0xFFB0BEC5))
-        drawLine(Color(0xFF78909C), Offset(w * 0.12f, h * 0.48f), Offset(w * 0.4f, h * 0.4f), w * 0.04f, cap = StrokeCap.Round)
-    }
+    // шуруповёрт — картинка пользователя (для кнопки «СВЕРЛИТЬ»)
+    BonusPicture(R.drawable.pic_shurupovert, modifier)
 }
 
 @Composable
 fun FlaskIcon(modifier: Modifier = Modifier) {
-    // TODO(art): заменить на Image(painterResource(R.drawable.ic_melt)) — см. DrillIcon
-    Canvas(modifier = modifier) {
-        val w = size.width; val h = size.height
-        val body = Path().apply {
-            moveTo(w * 0.4f, h * 0.15f)
-            lineTo(w * 0.4f, h * 0.42f)
-            lineTo(w * 0.16f, h * 0.82f)
-            quadraticTo(w * 0.12f, h * 0.9f, w * 0.22f, h * 0.9f)
-            lineTo(w * 0.78f, h * 0.9f)
-            quadraticTo(w * 0.88f, h * 0.9f, w * 0.84f, h * 0.82f)
-            lineTo(w * 0.6f, h * 0.42f)
-            lineTo(w * 0.6f, h * 0.15f)
-            close()
-        }
-        drawPath(body, Color(0xFFF6C97A))
-        drawPath(body, Color(0xFFB07A2E), style = Stroke(width = w * 0.04f))
-        drawRect(Color(0xFFE0A94E), Offset(w * 0.36f, h * 0.08f), Size(w * 0.28f, h * 0.09f))
-    }
+    // горелка — картинка пользователя (для кнопки «ПЛАВИТЬ»)
+    BonusPicture(R.drawable.pic_gorelka, modifier)
 }
 
 @Composable
 fun HammerIcon(modifier: Modifier = Modifier) {
-    // TODO(art): заменить на Image(painterResource(R.drawable.ic_seal)) — см. DrillIcon
-    Canvas(modifier = modifier) {
-        val w = size.width; val h = size.height
-        // рукоятка
-        drawLine(Color(0xFF8D6E63), Offset(w * 0.35f, h * 0.9f), Offset(w * 0.6f, h * 0.35f), w * 0.12f, cap = StrokeCap.Round)
-        // головка
-        drawRoundRect(
-            Color(0xFFB0BEC5), Offset(w * 0.45f, h * 0.12f), Size(w * 0.42f, h * 0.24f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f),
-        )
-        drawRoundRect(
-            Color(0xFF78909C), Offset(w * 0.18f, h * 0.16f), Size(w * 0.3f, h * 0.16f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f),
-        )
-    }
+    // молоток — картинка пользователя (для кнопки «ЗАДЕЛАТЬ»)
+    BonusPicture(R.drawable.pic_molotok, modifier)
 }
 
 @Composable
 fun BoxIcon(modifier: Modifier = Modifier, tint: Color = Color(0xFF4FA3F7), dots: Int = 0) {
-    Canvas(modifier = modifier) {
-        val w = size.width; val h = size.height
-        // ручка
-        drawRoundRect(tint, Offset(w * 0.38f, h * 0.06f), Size(w * 0.24f, h * 0.12f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f))
-        // корпус
-        drawRoundRect(
-            Color.White, Offset(w * 0.1f, h * 0.18f), Size(w * 0.8f, h * 0.68f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.1f),
-        )
-        drawRoundRect(
-            tint, Offset(w * 0.1f, h * 0.18f), Size(w * 0.8f, h * 0.68f),
-            style = Stroke(width = w * 0.08f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.1f),
-        )
-        val dotColor = if (dots > 0) Color(0xFFE53935) else Color(0xFFB0BEC5)
-        for (i in 0 until 3) {
-            drawCircle(if (i < dots) dotColor else Color(0xFFB0BEC5), w * 0.09f, Offset(w * (0.3f + i * 0.2f), h * 0.52f))
+    // ящик — картинка пользователя (диалог «Открыть ящик»); dots>0 (ревайв)
+    // остаётся нарисованным — нужен цветной ящик с красными точками
+    if (dots == 0) {
+        BonusPicture(R.drawable.pic_yashik, modifier)
+    } else {
+        Canvas(modifier = modifier) {
+            val w = size.width; val h = size.height
+            // ручка
+            drawRoundRect(tint, Offset(w * 0.38f, h * 0.06f), Size(w * 0.24f, h * 0.12f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f))
+            // корпус
+            drawRoundRect(
+                Color.White, Offset(w * 0.1f, h * 0.18f), Size(w * 0.8f, h * 0.68f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.1f),
+            )
+            drawRoundRect(
+                tint, Offset(w * 0.1f, h * 0.18f), Size(w * 0.8f, h * 0.68f),
+                style = Stroke(width = w * 0.08f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.1f),
+            )
+            val dotColor = Color(0xFFE53935)
+            for (i in 0 until 3) {
+                drawCircle(if (i < dots) dotColor else Color(0xFFB0BEC5), w * 0.09f, Offset(w * (0.3f + i * 0.2f), h * 0.52f))
+            }
         }
     }
 }
 
 @Composable
-fun GiftIcon(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val w = size.width; val h = size.height
-        drawRoundRect(Color(0xFF8E24AA), Offset(w * 0.15f, h * 0.4f), Size(w * 0.7f, h * 0.5f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.06f))
-        drawRect(Color(0xFFFFC534), Offset(w * 0.45f, h * 0.4f), Size(w * 0.1f, h * 0.5f))
-        drawRoundRect(Color(0xFFAB47BC), Offset(w * 0.1f, h * 0.28f), Size(w * 0.8f, h * 0.16f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.05f))
-        drawCircle(Color(0xFFFFC534), w * 0.1f, Offset(w * 0.35f, h * 0.2f))
-        drawCircle(Color(0xFFFFC534), w * 0.1f, Offset(w * 0.65f, h * 0.2f))
-    }
+fun WalletIcon(modifier: Modifier = Modifier) {
+    // кошелёк — картинка пользователя для диалога «Кошелёк» (белый фон вырезан)
+    BonusPicture(R.drawable.pic_koshelek, modifier)
 }
 
 @Composable
@@ -195,18 +199,11 @@ fun VideoIcon(modifier: Modifier = Modifier, color: Color = Color.White) {
     }
 }
 
+/** Шляпка винта — как на доске (тот же drawScrewAt), для кнопки «Играть». */
 @Composable
-fun GearIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF2E7BD6)) {
+fun ScrewIcon(modifier: Modifier = Modifier, color: Color = Color(0xFFFFC534)) {
     Canvas(modifier = modifier) {
-        val c = Offset(center.x, center.y)
-        val r = size.minDimension / 2f
-        for (i in 0 until 8) {
-            val a = Math.toRadians(i * 45.0)
-            drawLine(color, Offset(c.x + (r * 0.6f * Math.cos(a)).toFloat(), c.y + (r * 0.6f * Math.sin(a)).toFloat()),
-                Offset(c.x + (r * 0.95f * Math.cos(a)).toFloat(), c.y + (r * 0.95f * Math.sin(a)).toFloat()), r * 0.34f, cap = StrokeCap.Round)
-        }
-        drawCircle(color, r * 0.6f, c)
-        drawCircle(Color.White, r * 0.26f, c)
+        drawScrewAt(Offset(center.x, center.y), color, size.minDimension / 2f * 0.9f)
     }
 }
 
@@ -260,10 +257,14 @@ fun TrophyIcon(modifier: Modifier = Modifier, color: Color = Color(0xFFF6B500)) 
 }
 
 @Composable
-fun ShopIcon(modifier: Modifier = Modifier) {
+fun ShopIcon(modifier: Modifier = Modifier, color: Color = Color(0xFFE53935)) {
+    // color красит «навес» магазина: в нижней панели вкладки теперь ВСЕ жёлтые
+    // (пользователь: «закрась шестерёнку и вообще все иконки нижней панели
+    // жёлтым — как у трофеев»). Корпус остаётся белым, «витрины» — синими,
+    // чтобы иконка не превращалась в жёлтое пятно.
     Canvas(modifier = modifier) {
         val w = size.width; val h = size.height
-        drawRect(Color(0xFFE53935), Offset(w * 0.16f, h * 0.3f), Size(w * 0.68f, h * 0.12f))
+        drawRect(color, Offset(w * 0.16f, h * 0.3f), Size(w * 0.68f, h * 0.12f))
         drawRect(Color.White, Offset(w * 0.16f, h * 0.42f), Size(w * 0.68f, h * 0.36f))
         drawRect(Color(0xFF1E88E5), Offset(w * 0.28f, h * 0.5f), Size(w * 0.16f, h * 0.28f))
         drawRect(Color(0xFF1E88E5), Offset(w * 0.56f, h * 0.5f), Size(w * 0.16f, h * 0.28f))
@@ -285,5 +286,41 @@ fun StarIcon(modifier: Modifier = Modifier, color: Color = Color(0xFFFFD54F)) {
         }
         path.close()
         drawPath(path, color)
+    }
+}
+
+/** Бумажный самолётик — канал в Telegram (рисунок как в проекте Tetris). */
+@Composable
+fun TelegramIcon(modifier: Modifier = Modifier, color: Color = Palette.blue) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val plane = Path().apply {
+            moveTo(w * 0.06f, h * 0.48f)
+            lineTo(w * 0.94f, h * 0.10f)
+            lineTo(w * 0.62f, h * 0.90f)
+            lineTo(w * 0.46f, h * 0.60f)
+            close()
+        }
+        drawPath(plane, color)
+        // сгиб крыла — «прорезан» цветом белой карточки
+        drawLine(Color(0xFFF2F5FB), Offset(w * 0.46f, h * 0.60f), Offset(w * 0.94f, h * 0.10f), w * 0.06f)
+    }
+}
+
+/** Каталог приложений — сетка 2x2 «плиток» (как в проекте Tetris). */
+@Composable
+fun CatalogIcon(modifier: Modifier = Modifier, color: Color = Palette.blue) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val s = w * 0.36f
+        val gap = w * 0.08f
+        val r = androidx.compose.ui.geometry.CornerRadius(w * 0.08f, w * 0.08f)
+        drawRoundRect(color, Offset(w * 0.10f, h * 0.10f), Size(s, s), r)
+        // правая верхняя — полупрозрачная: «и ещё много чего»
+        drawRoundRect(color.copy(alpha = 0.55f), Offset(w * 0.10f + s + gap, h * 0.10f), Size(s, s), r)
+        drawRoundRect(color, Offset(w * 0.10f, h * 0.10f + s + gap), Size(s, s), r)
+        drawRoundRect(color, Offset(w * 0.10f + s + gap, h * 0.10f + s + gap), Size(s, s), r)
     }
 }

@@ -1,18 +1,65 @@
+# ==========================================
+# Android Studio / IntelliJ
+# ==========================================
 *.iml
-.gradle
-/local.properties
-.idea
-.kotlin
-.DS_Store
-/build
-*/build
-app/build
-app/release
-/captures
-.externalNativeBuild
-.cxx
-local.properties
-# ключи и подписи не коммитим
+.idea/
+.navigation/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# ==========================================
+# Gradle / Build (исключаем всё собранное)
+# ==========================================
+.gradle/
+build/
+**/build/
+out/
+*.apk
+*.aab
+*.aar
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.class
+*.dex
+*.hprof
+
+# ==========================================
+# Релизы и подписи (ВАЖНО — не коммитим!)
+# ==========================================
+release/
+*/release/
+**/release/
 *.jks
 *.keystore
-*.hprof
+*.p12
+*.pfx
+*.pem
+keystore.properties
+signing.properties
+
+# ==========================================
+# Локальные конфиги и секреты
+# ==========================================
+local.properties
+.env
+.env.*
+secrets.properties
+
+# ==========================================
+# Системные файлы
+# ==========================================
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.swp
+*.orig
+*.rej
+.gradle-cache/
+build-cache/
+
+# ==========================================
+# Ваши локальные скрипты (если не нужны в репо)
+# ==========================================
+/tools

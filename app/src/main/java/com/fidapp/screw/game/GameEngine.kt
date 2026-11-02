@@ -3,7 +3,9 @@ package com.fidapp.screw.game
 /**
  * Движок уровня. Контракт (не менять без нужды):
  *  1. тап по доступному шурупу -> шуруп улетает в открытый ЯЩИК СВОЕГО ЦВЕТА;
- *     доступный — не перекрыт даже ЧАСТИЧНО ни одной живой деталью выше слоем;
+ *     доступный — не перекрыт даже ЧАСТИЧНО ни одной живой деталью выше слоем
+ *     и ни одним винтом той же детали, нарисованным позже (винты тоже
+ *     «слоями»: верхний блокирует нижний);
  *     чтобы добраться до нижних фигур, сначала выкручивают винты верхних;
  *  2. вверху открыто ACTIVE_BOX_SLOTS (2) ящика, каждый ровно под ОДИН цвет,
  *     в каждом всегда 3 гнезда — прилетевший винт остаётся в гнезде;
@@ -12,8 +14,9 @@ package com.fidapp.screw.game
  *     цвета на доске больше нет, ящик уезжает недолитым; шурупы нужного
  *     цвета АВТОМАТИЧЕСКИ перелетают в новый ящик со склада;
  *  4. нет открытого ящика цвета — шуруп кладётся на СКЛАД (кружки под ящиками,
- *     level.holdSlots штук); склад забит и ни один доступный винт не подходит
- *     к ящикам — поражение;
+ *     level.holdSlots штук); склад забит ПОД ЗАВЯЗКУ и на доске ещё есть винты —
+ *     поражение сразу («5 винтов в пуле = конец игры»), даже если какой-то
+ *     доступный винт формально подошёл бы ящику;
  *  5. «Открыть ящик» (плитка-бонус, CLOSED_TILES на уровень) — за цену из
  *     Economy открывает следующий ящик очереди ДОПОЛНИТЕЛЬНЫМ активным;
  *  6. когда у детали не остаётся шурупов — она падает (событие PieceFell);
@@ -108,14 +111,25 @@ class GameEngine(val level: Level) {
      * на радиусе — иначе винт «задет» краем верхней фигуры). Блокируют
      * ВСЕ живые детали, включая серые «стёкла» (locked): сквозь стекло
      * выкручивать нельзя — его убирают только бонусом «Плавить».
+     * Плюс винты блокируют ДРУГ ДРУГА на одной детали: шляпка перекрыта
+     * шляпкой винта, нарисованного позже (он выше слоем), — нижний не
+     * выкрутить, пока не выкручен верхний.
      */
     fun isScrewAccessible(screw: Screw): Boolean {
         if (isCollected(screw.id)) return false
         val owner = pieceOf(screw)
         if (owner.locked || !isLive(owner)) return false
-        return level.pieces.none { upper ->
-            upper.id != owner.id && isLive(upper) &&
-                upper.layer > owner.layer && coversScrew(upper, screw)
+        if (level.pieces.any { upper ->
+                upper.id != owner.id && isLive(upper) &&
+                    upper.layer > owner.layer && coversScrew(upper, screw)
+            }
+        ) return false
+        // перекрытие другим винтом той же детали (идём «по слоям»: кто
+        // нарисован позже — тот сверху)
+        return screws.none { other ->
+            other.id != screw.id && !isCollected(other.id) &&
+                other.pieceId == owner.id && other.id > screw.id &&
+                overlapsScrew(other, screw)
         }
     }
 
@@ -129,6 +143,13 @@ class GameEngine(val level: Level) {
             piece.contains(screw.x - r, screw.y) ||
             piece.contains(screw.x, screw.y + r) ||
             piece.contains(screw.x, screw.y - r)
+    }
+
+    /** Перекрываются ли шляпки двух винтов (окружности радиуса SCREW_HEAD_R). */
+    private fun overlapsScrew(top: Screw, bottom: Screw): Boolean {
+        val dx = top.x - bottom.x
+        val dy = top.y - bottom.y
+        return dx * dx + dy * dy < (2f * SCREW_HEAD_R) * (2f * SCREW_HEAD_R)
     }
 
     fun accessibleScrews(): List<Screw> = screws.filter { isScrewAccessible(it) }
@@ -206,6 +227,13 @@ class GameEngine(val level: Level) {
         return events
     }
 
+    /**
+     * Оценить итог, НЕ трогая ящики. UI вызывает, когда игрок тапнул невозможный
+     * винт (ПУЛ заполнен и ни один доступный винт не идёт в ящик своего цвета) —
+     * это тупик, и поражение надо показать сразу, а не ждать прилёта другого винта.
+     */
+    fun checkStuck(): List<Event> = evaluateEnd()
+
     /** Приезд ящика из очереди (в слот [atIndex] или в конец) + автоперелёт винтов со склада. */
     private fun arriveNextBox(atIndex: Int? = null): List<Event> {
         val box = nextQueuedBox() ?: return emptyList()
@@ -242,9 +270,13 @@ class GameEngine(val level: Level) {
         return queue.removeFirst()
     }
 
-    /** Бонус «Сверлить»: +1 кружок склада (не больше трёх за уровень). */
+    /**
+     * Бонус «Сверлить»: +1 кружок склада. Потолок — 5 дополнительных
+     * слотов (базовых 5 → максимум 10): ровно столько запасено места
+     * в ряду (см. HoldRow.MAX_HOLD_SLOTS), иначе кружки «упрутся».
+     */
     fun drill(): Boolean {
-        if (extraHold >= 3) return false
+        if (extraHold >= 5) return false
         extraHold++
         return true
     }
@@ -276,12 +308,13 @@ class GameEngine(val level: Level) {
                 finished = Event.Win
                 listOf(Event.Win)
             }
-            // поражение: шурупы ещё на доске, легальных ходов нет, и СПЛАВИТЬ
-            // нечего (есть живое стекло — игрок может открыть ход бонусом, это
-            // ещё не конец)
+            // поражение (правило пользователя «5 винтов в пуле = конец игры»):
+            // шурупы ещё на доске И либо ПУЛ забит под завязку (независимо от
+            // наличия стекла и подходящих ящиков — класть больше некуда),
+            // либо легальных ходов нет и сплавить нечего
             screws.any { !isCollected(it.id) } &&
-                !hasLiveLocked() &&
-                accessibleScrews().none { canTap(it) } -> {
+                (hold.size >= holdCapacity ||
+                    (accessibleScrews().none { canTap(it) } && !hasLiveLocked())) -> {
                 finished = Event.Lose
                 listOf(Event.Lose)
             }

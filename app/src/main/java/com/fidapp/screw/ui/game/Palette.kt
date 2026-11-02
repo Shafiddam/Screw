@@ -37,10 +37,10 @@ object Palette {
     val red = Color(0xFFE53935)
     val redDark = Color(0xFFB71C1C)
 
-    // карта уровней
+    // карта уровней: пройденный — зелёный, текущий — синий (по просьбе пользователя)
     val mapLocked = Color(0xFF6A4E9C)
-    val mapCurrent = Color(0xFF4CAF50)
-    val mapDone = Color(0xFF2F80ED)
+    val mapCurrent = Color(0xFF2F80ED)
+    val mapDone = Color(0xFF4CAF50)
     val mapPath = Color(0xFFF6C97A)
 
     // промо «наборы»

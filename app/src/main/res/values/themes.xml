@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <style name="Theme.Screw" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Стартовый фон окна (splash): белый при светлой теме устройства -->
+    <style name="Theme.Screw" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
 </resources>

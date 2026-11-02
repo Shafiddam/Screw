@@ -6,9 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -109,6 +112,7 @@ fun AvatarBox(
 fun MyDialog(player: PlayerStore, onOpenAvatars: () -> Unit, onClose: () -> Unit) {
     var editing by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf(player.nickname) }
+    val click = LocalClickSound.current
 
     Dialog(onDismissRequest = onClose) {
         GameDialog(L("my"), onClose) {
@@ -119,7 +123,7 @@ fun MyDialog(player: PlayerStore, onOpenAvatars: () -> Unit, onClose: () -> Unit
             ) {
                 // аватар + шестерёнка — тап открывает выбор аватара
                 Box {
-                    AvatarBox(player.avatar, 76.dp, modifier = Modifier.clickable { onOpenAvatars() })
+                    AvatarBox(player.avatar, 76.dp, modifier = Modifier.clickable { click(); onOpenAvatars() })
                     Text(
                         "⚙️",
                         fontSize = 18.sp,
@@ -128,7 +132,7 @@ fun MyDialog(player: PlayerStore, onOpenAvatars: () -> Unit, onClose: () -> Unit
                             .size(26.dp)
                             .clip(CircleShape)
                             .background(Palette.panelBlue)
-                            .clickable { onOpenAvatars() }
+                            .clickable { click(); onOpenAvatars() }
                             .padding(2.dp),
                     )
                 }
@@ -152,7 +156,7 @@ fun MyDialog(player: PlayerStore, onOpenAvatars: () -> Unit, onClose: () -> Unit
                         Spacer(Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             CartoonButton("OK", { player.rename(draft); editing = false }, base = Palette.green, edge = Palette.greenDark, height = 40.dp, fontSize = 15, modifier = Modifier.weight(1f))
-                            CartoonButton(L("close"), { draft = player.nickname; editing = false }, base = Palette.blue, height = 40.dp, fontSize = 15, modifier = Modifier.weight(1f))
+                            CartoonButton(L("cancel"), { draft = player.nickname; editing = false }, base = Palette.blue, height = 40.dp, fontSize = 12, textColor = Color(0xFFEAF3FF), modifier = Modifier.weight(1f))
                         }
                     } else {
                         Text(player.nickname, color = Color(0xFF2A3B63), fontWeight = FontWeight.Black, fontSize = 17.sp, maxLines = 1)
@@ -162,7 +166,7 @@ fun MyDialog(player: PlayerStore, onOpenAvatars: () -> Unit, onClose: () -> Unit
                             color = Palette.blue,
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
-                            modifier = Modifier.clickable { draft = player.nickname; editing = true },
+                            modifier = Modifier.clickable { click(); draft = player.nickname; editing = true },
                         )
                     }
                 }
@@ -195,18 +199,38 @@ private fun MedalBadge(level: Int) {
     }
 }
 
-/** Голубой флажок-заголовок «Статистика». */
+/**
+ * Голубой флажок-заголовок «Статистика». Стиль согласован с шапкой `GameFrame`
+ * (заголовок «Мое»): та жеpill-скруглённость, Белая кайма и два «ScrewDot»
+ * винтика по краям (были жёлтые острые уголки без винтов — пользователь просил
+ * единообразие).
+ */
 @Composable
 private fun StatBanner(text: String) {
+    val shape = RoundedCornerShape(percent = 50)
     Box(
         Modifier
-            .width(220.dp)
-            .height(40.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .width(240.dp)
+            .height(44.dp)
+            .shadow(4.dp, shape)
+            .clip(shape)
             .background(Brush.verticalGradient(listOf(Palette.blue.lighten(0.35f), Palette.blue)))
-            .border(2.dp, Color(0xFFFFD23F), RoundedCornerShape(10.dp)),
+            .border(1.5.dp, Color.White.copy(alpha = 0.6f), shape),
         contentAlignment = Alignment.Center,
-    ) { Text(text, color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp) }
+    ) {
+        Text(text, color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp)
+        // винтики по краям — тот же ScrewDot, что рисует шапку любого диалога
+        Row(
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ScrewDot()
+            ScrewDot()
+        }
+    }
 }
 
 @Composable
@@ -222,11 +246,15 @@ private fun StatsGrid(player: PlayerStore) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         cells.chunked(3).forEach { row ->
             Row(
-                Modifier.fillMaxWidth(),
+                // IntrinsicSize.Max + fillMaxHeight: высота строки = самая высокая
+                // карточка, поэтому «Чемпион лиги» больше не короче соседей
+                Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 row.forEach { (icon, title, value) ->
-                    StatCard(icon, title, value, Modifier.weight(1f))
+                    StatCard(icon, title, value, Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
@@ -244,8 +272,19 @@ private fun StatCard(icon: String, title: String, value: Int, modifier: Modifier
     ) {
         Text(icon, fontSize = 28.sp)
         Spacer(Modifier.height(4.dp))
-        Text(title, color = Color(0xFF5A4A2A), fontWeight = FontWeight.Bold, fontSize = 11.sp, textAlign = TextAlign.Center, maxLines = 2)
-        Spacer(Modifier.height(6.dp))
+        Text(
+            title,
+            color = Color(0xFF5A4A2A),
+            fontWeight = FontWeight.Bold,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+        )
+        // остаток высоты съедает этот упругий отступ: плашка со значением всегда
+        // прижата к низу, поэтому карточки в строке одинаковые и при 1, и при 2
+        // строках подписи (фиксированная высота текста ломалась на крупном
+        // системном шрифте — вторая строка обрезалась)
+        Spacer(Modifier.weight(1f).height(6.dp))
         Box(
             Modifier
                 .width(52.dp)
@@ -261,6 +300,7 @@ private fun StatCard(icon: String, title: String, value: Int, modifier: Modifier
 @Composable
 fun AvatarDialog(player: PlayerStore, onClose: () -> Unit) {
     var hint by remember { mutableStateOf<Int?>(null) }
+    val click = LocalClickSound.current
     Dialog(onDismissRequest = onClose) {
         GameDialog(L("avatars"), onClose) {
             hint?.let { lvl ->
@@ -290,6 +330,7 @@ fun AvatarDialog(player: PlayerStore, onClose: () -> Unit) {
                                 selected = player.avatar == index,
                                 locked = !unlocked,
                                 modifier = Modifier.clickable {
+                                    click()
                                     if (unlocked) {
                                         player.chooseAvatar(index)
                                         hint = null
